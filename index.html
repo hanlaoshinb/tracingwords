@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>文字转描摹图片</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            border: 1px solid #ccc;
+            margin: 20px 0;
+        }
+        #downloadBtn {
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        #textInput {
+            margin: 20px 0;
+            padding: 15px;
+            font-size: 18px;
+            width: 600px;
+            height: 150px;
+            border: 2px solid #ccc;
+            border-radius: 4px;
+            resize: vertical;
+            line-height: 1.5;
+            font-family: Arial, sans-serif;
+        }
+        #textInput:focus {
+            border-color: #4CAF50;
+            box-shadow: 0 0 5px rgba(74, 175, 80, 0.3);
+            outline: none;
+        }
+        /* 新增分页控制样式 */
+        .page-control {
+            display: flex;
+            gap: 10px;
+            margin: 10px 0;
+        }
+        .page-info {
+            margin: 0 10px;
+            line-height: 38px;
+        }
+        .nav-btn {
+            padding: 8px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .nav-btn:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        /* 添加新按钮样式 */
+        .download-all-btn {
+            margin-top: 10px;
+            padding: 10px 20px;
+            background-color: #2196F3;  /* 使用不同的颜色区分 */
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <h1>文字转描摹图片</h1>
+    <textarea 
+        id="textInput" 
+        placeholder="请输入要转换的文字（每个单词将生成独立的描摹图）" 
+        >good morning my friend how are you today I am fine thank you</textarea>
+    <div class="page-control">
+        <button id="prevBtn" class="nav-btn">上一页</button>
+        <span class="page-info">第 <span id="currentPage">1</span> 页，共 <span id="totalPages">1</span> 页</span>
+        <button id="nextBtn" class="nav-btn">下一页</button>
+    </div>
+    <canvas id="canvas"></canvas>
+    <button id="downloadBtn">下载当前页PNG</button>
+    <button id="downloadPdfBtn" class="download-all-btn">下载所有页面PDF</button>
+
+    <script>
+        let currentPageIndex = 0;
+        let pages = [];
+        const WORDS_PER_PAGE = 3; // 每页显示的单词数
+
+        function splitTextIntoPages(text) {
+            const trimmedText = text.trim();
+            
+            // 1. 先按换行符分割
+            const paragraphs = trimmedText.split(/\r\n|\r|\n/);
+            
+            // 2. 对每个段落按句子分割
+            const sentences = paragraphs
+                .map(paragraph => {
+                    // 处理句子结束符
+                    return paragraph
+                        .split(/[.!?。！？;；]+|\.\.\.|…/g)
+                        .map(sentence => sentence.trim())
+                        .filter(sentence => sentence.length > 0);
+                })
+                .flat()  // 展平数组
+                .filter(sentence => sentence.length > 0);  // 移除空句子
+            
+            // 3. 如果没有分割出句子，就将整个文本作为一个句子
+            if (sentences.length === 0) {
+                return [[trimmedText]];
+            }
+            
+            // 4. 每个句子作为一页
+            return sentences.map(sentence => [sentence]);
+        }
+
+        function updatePageControls() {
+            document.getElementById('currentPage').textContent = currentPageIndex + 1;
+            document.getElementById('totalPages').textContent = pages.length;
+            document.getElementById('prevBtn').disabled = currentPageIndex === 0;
+            document.getElementById('nextBtn').disabled = currentPageIndex === pages.length - 1;
+        }
+
+        function drawText() {
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+            const text = document.getElementById('textInput').value;
+            
+            // 分割文本为页面
+            pages = splitTextIntoPages(text);
+            currentPageIndex = 0;
+            
+            // 更新页面控制器
+            updatePageControls();
+            
+            // 绘制当前页
+            drawPage();
+        }
+
+        function drawPage() {
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+
+            // A4纸的尺寸（毫米）- 横向模式
+            const A4_WIDTH_MM = 297;
+            const A4_HEIGHT_MM = 210;
+            
+            const A4_WIDTH_PX = Math.floor((A4_WIDTH_MM / 25.4) * 96);
+            const A4_HEIGHT_PX = Math.floor((A4_HEIGHT_MM / 25.4) * 96);
+
+            canvas.width = A4_WIDTH_PX;
+            canvas.height = A4_HEIGHT_PX;
+
+            // 设置白色背景
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            const currentSentence = pages[currentPageIndex]?.[0];
+            if (!currentSentence) return;
+
+            // 将句子按空格分割成单词
+            const words = currentSentence.split(/\s+/);
+            
+            // 设置边距
+            const margin = {
+                top: canvas.height * 0.1,    // 10% 上边距
+                bottom: canvas.height * 0.1,  // 10% 下边距
+                left: canvas.width * 0.05,    // 5% 左边距
+                right: canvas.width * 0.05    // 5% 右边距
+            };
+
+            // 计算可用空间
+            const availableWidth = canvas.width - margin.left - margin.right;
+            const availableHeight = canvas.height - margin.top - margin.bottom;
+
+            // 二分查找最佳字体大小
+            let minSize = 50;
+            let maxSize = 300;
+            let bestSize = minSize;
+            let bestLines = [];
+
+            while (minSize <= maxSize) {
+                const midSize = Math.floor((minSize + maxSize) / 2);
+                ctx.font = `${midSize}px Arial`;
+
+                // 尝试用当前字体大小排版
+                const lines = [];
+                let currentLine = [];
+                let currentLineWidth = 0;
+
+                for (const word of words) {
+                    const wordWidth = ctx.measureText(word + ' ').width;
+                    
+                    if (currentLineWidth + wordWidth <= availableWidth) {
+                        currentLine.push(word);
+                        currentLineWidth += wordWidth;
+                    } else {
+                        if (currentLine.length > 0) {
+                            lines.push(currentLine);
+                        }
+                        currentLine = [word];
+                        currentLineWidth = wordWidth;
+                    }
+                }
+                if (currentLine.length > 0) {
+                    lines.push(currentLine);
+                }
+
+                // 计算总高度
+                const totalHeight = lines.length * (midSize * 1.5); // 1.5倍行高
+
+                // 检查是否适合可用空间
+                if (totalHeight <= availableHeight) {
+                    bestSize = midSize;
+                    bestLines = lines;
+                    minSize = midSize + 1;
+                } else {
+                    maxSize = midSize - 1;
+                }
+            }
+
+            // 使用最佳字体大小绘制文本
+            ctx.font = `${bestSize}px Arial`;
+            ctx.lineWidth = Math.max(2, bestSize / 50);
+            ctx.strokeStyle = 'black';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            // 计算起始Y坐标，使文本垂直居中
+            const lineHeight = bestSize * 1.5;
+            const totalTextHeight = bestLines.length * lineHeight;
+            let startY = margin.top + (availableHeight - totalTextHeight) / 2 + bestSize / 2;
+
+            // 绘制每一行
+            bestLines.forEach((line, index) => {
+                const y = startY + index * lineHeight;
+                const text = line.join(' ');
+                ctx.strokeText(text, canvas.width / 2, y);
+            });
+        }
+
+        // 添加生成单页图片的函数
+        function generatePageImage(pageIndex) {
+            return new Promise((resolve) => {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+
+                // A4纸的尺寸（毫米）- 横向模式
+                const A4_WIDTH_MM = 297;
+                const A4_HEIGHT_MM = 210;
+                
+                // 将毫米转换为像素 (96 DPI)
+                const A4_WIDTH_PX = Math.floor((A4_WIDTH_MM / 25.4) * 96);
+                const A4_HEIGHT_PX = Math.floor((A4_HEIGHT_MM / 25.4) * 96);
+
+                // 设置画布大小
+                canvas.width = A4_WIDTH_PX;
+                canvas.height = A4_HEIGHT_PX;
+
+                // 设置白色背景
+                ctx.fillStyle = 'white';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                const currentSentence = pages[pageIndex]?.[0];
+                if (!currentSentence) {
+                    resolve(null);
+                    return;
+                }
+
+                // 将句子按空格分割成单词
+                const words = currentSentence.split(/\s+/);
+                
+                // 设置边距
+                const margin = {
+                    top: canvas.height * 0.1,    // 10% 上边距
+                    bottom: canvas.height * 0.1,  // 10% 下边距
+                    left: canvas.width * 0.05,    // 5% 左边距
+                    right: canvas.width * 0.05    // 5% 右边距
+                };
+
+                // 计算可用空间
+                const availableWidth = canvas.width - margin.left - margin.right;
+                const availableHeight = canvas.height - margin.top - margin.bottom;
+
+                // 二分查找最佳字体大小
+                let minSize = 50;
+                let maxSize = 300;
+                let bestSize = minSize;
+                let bestLines = [];
+
+                while (minSize <= maxSize) {
+                    const midSize = Math.floor((minSize + maxSize) / 2);
+                    ctx.font = `${midSize}px Arial`;
+
+                    // 尝试用当前字体大小排版
+                    const lines = [];
+                    let currentLine = [];
+                    let currentLineWidth = 0;
+
+                    for (const word of words) {
+                        const wordWidth = ctx.measureText(word + ' ').width;
+                        
+                        if (currentLineWidth + wordWidth <= availableWidth) {
+                            currentLine.push(word);
+                            currentLineWidth += wordWidth;
+                        } else {
+                            if (currentLine.length > 0) {
+                                lines.push(currentLine);
+                            }
+                            currentLine = [word];
+                            currentLineWidth = wordWidth;
+                        }
+                    }
+                    if (currentLine.length > 0) {
+                        lines.push(currentLine);
+                    }
+
+                    // 计算总高度
+                    const totalHeight = lines.length * (midSize * 1.5); // 1.5倍行高
+
+                    // 检查是否适合可用空间
+                    if (totalHeight <= availableHeight) {
+                        bestSize = midSize;
+                        bestLines = lines;
+                        minSize = midSize + 1;
+                    } else {
+                        maxSize = midSize - 1;
+                    }
+                }
+
+                // 使用最佳字体大小绘制文本
+                ctx.font = `${bestSize}px Arial`;
+                ctx.lineWidth = Math.max(2, bestSize / 50);
+                ctx.strokeStyle = 'black';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+
+                // 计算起始Y坐标，使文本垂直居中
+                const lineHeight = bestSize * 1.5;
+                const totalTextHeight = bestLines.length * lineHeight;
+                let startY = margin.top + (availableHeight - totalTextHeight) / 2 + bestSize / 2;
+
+                // 绘制每一行
+                bestLines.forEach((line, index) => {
+                    const y = startY + index * lineHeight;
+                    const text = line.join(' ');
+                    ctx.strokeText(text, canvas.width / 2, y);
+                });
+
+                resolve(canvas);
+            });
+        }
+
+        // 添加生成PDF的函数
+        async function generatePDF() {
+            // 创建PDF文档
+            const { jsPDF } = window.jspdf;
+            const pdf = new jsPDF({
+                orientation: 'landscape',
+                unit: 'mm',
+                format: 'a4'
+            });
+
+            // 为每一页生成图片并添加到PDF
+            for (let i = 0; i < pages.length; i++) {
+                const canvas = await generatePageImage(i);
+                if (!canvas) continue;
+
+                // 将canvas转换为图片数据
+                const imgData = canvas.toDataURL('image/jpeg', 1.0);
+
+                // 添加到PDF（第一页不需要新建页面）
+                if (i > 0) {
+                    pdf.addPage();
+                }
+                
+                // 将图片添加到PDF页面
+                pdf.addImage(imgData, 'JPEG', 0, 0, 297, 210);
+            }
+
+            // 保存PDF
+            pdf.save('tracing-words.pdf');
+        }
+
+        window.onload = function() {
+            // 初始绘制
+            drawText();
+
+            // 监听输入框变化
+            document.getElementById('textInput').addEventListener('input', drawText);
+
+            // 上一页按钮
+            document.getElementById('prevBtn').addEventListener('click', () => {
+                if (currentPageIndex > 0) {
+                    currentPageIndex--;
+                    drawPage();
+                    updatePageControls();
+                }
+            });
+
+            // 下一页按钮
+            document.getElementById('nextBtn').addEventListener('click', () => {
+                if (currentPageIndex < pages.length - 1) {
+                    currentPageIndex++;
+                    drawPage();
+                    updatePageControls();
+                }
+            });
+
+            // 下载按钮功能
+            document.getElementById('downloadBtn').onclick = function() {
+                const link = document.createElement('a');
+                link.download = `tracing-words-page${currentPageIndex + 1}.png`;
+                link.href = canvas.toDataURL();
+                link.click();
+            };
+
+            // 添加PDF下载按钮事件监听
+            document.getElementById('downloadPdfBtn').addEventListener('click', generatePDF);
+        };
+    </script>
+</body>
+</html> 
